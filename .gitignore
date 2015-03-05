@@ -1,0 +1,7 @@
+*~
+*.pyc
+dist/*
+build/*
+MANIFEST
+*.pyp*
+tstl.egg-info/
