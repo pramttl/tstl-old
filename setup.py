@@ -8,10 +8,10 @@ setup(
     version='0.1',
     description='A template scripting testing language based on research by Dr. Alex Groce & Dr. Jervis Pinto.',
     long_description=open('README.md').read(),
-    packages=['tstl',],
+    packages=['src',],
     entry_points="""
     [console_scripts]
-    tstl = tstl.harnessmaker
+    tstl = src.harnessmaker
     """,
     keywords='testing tstl',
     classifiers=[
@@ -19,7 +19,7 @@ setup(
       "Development Status :: 1 - Alpha",
       "Programming Language :: Python :: 2",
       ],
-    include_package_data=True,
+    include_package_data = True,
 )
 
 
