@@ -4,6 +4,9 @@ import os
 import re
 from collections import namedtuple
 
+# For packaging harnessmaker to tstl package
+import pkg_resources
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-a', '--act', type=str, default=None,
@@ -91,6 +94,8 @@ code = []
 import_modules = []  # we will call reload on these during restart
 with open(config.act, 'r') as fp:
     for l in fp:
+        if l[-1] != "\n":
+            l = l + "\n"
         if l[0] == "#":
             continue # COMMENT
         if l[0] == "@":
@@ -237,6 +242,21 @@ for p in poolSet:
         newLogs.append(c.replace(p + " ", poolPrefix + p.replace("%","")))
     logSet = newLogs
 
+newLogs = []
+for l in logSet:
+    refl = l
+    for p in poolSet:
+        if p in refSet:
+            pRaw = poolPrefix + p.replace("%","")
+            refl = l.replace(pRaw,pRaw+"_REF")
+    if refl != l:        
+        for base in referenceMap:
+            refl = re.sub(base,referenceMap[base],refl)
+    newLogs.append(l)        
+    if refl != l:
+        newLogs.append(refl)
+logSet = newLogs
+
 # Now generate the action and guard code
 
 outf.write("class " + config.classname + "(object):\n")
@@ -363,7 +383,7 @@ for corig in code:
     if refC != newC:
         genCode.append(baseIndent + refC + "\n")
         if comparing:
-            genCode.append(baseIndent + "assert __result == __result_REF\n")
+            genCode.append(baseIndent + "assert __result == __result_REF, \" (%s) == (%s) \" % (__result, __result_REF)\n")
     for ch in changes:
         genCode.append(baseIndent + ch + "\n")
 
@@ -412,130 +432,140 @@ def genInitialization():
         genCode.append(baseIndent + "if self.__collectCov: self.__cov.collector.stop()\n")        
         genCode.append(baseIndent + "if self.__collectCov: self.__updateCov()\n")
 
-genCode.append("def __init__(self):\n")
-genCode.append(baseIndent + "self.__features = []\n")
-for f in featureSet:
-    genCode.append(baseIndent + 'self.__features.append(r"' + f + '")\n')
 
-if not config.nocover:
-    covc = baseIndent + "self.__cov = coverage.coverage(branch=True, source=["
-    for s in sourceSet:
-        covc += '"' + s + '",'
-    if len(sourceSet) > 0:
-        covc = covc[:-1]
-    genCode.append(covc + "])\n")
-    genCode.append(baseIndent + "self.__collectCov = True\n")
-    genCode.append(baseIndent + "self.__allBranches = set()\n")
-    genCode.append(baseIndent + "self.__allStatements = set()\n")
-    genCode.append(baseIndent + "self.__newBranches = set()\n")
-    genCode.append(baseIndent + "self.__newStatements = set()\n")
-    genCode.append(baseIndent + "self.__currBranches = set()\n")
-    genCode.append(baseIndent + "self.__currStatements = set()\n")
-    genCode.append(baseIndent + "self.__newCurrBranches = set()\n")
-    genCode.append(baseIndent + "self.__newCurrStatements = set()\n")
+def main():
+    genCode.append("def __init__(self):\n")
+    genCode.append(baseIndent + "self.__features = []\n")
+    for f in featureSet:
+        genCode.append(baseIndent + 'self.__features.append(r"' + f + '")\n')
 
-genInitialization()
-    
-genCode.append(baseIndent + "self.__actions = []\n")
-genCode.append(baseIndent + "self.__names = {}\n")
-genCode.append(baseIndent + "self.__failure = None\n")
-genCode.append(baseIndent + "self.__log = None\n")
-genCode.append(baseIndent + "self.__logAction = self.logPrint\n")
-for d in actDefs:
-    genCode.append(baseIndent + d + "\n")
+    if not config.nocover:
+        covc = baseIndent + "self.__cov = coverage.coverage(branch=True, source=["
+        for s in sourceSet:
+            covc += '"' + s + '",'
+        if len(sourceSet) > 0:
+            covc = covc[:-1]
+        genCode.append(covc + "])\n")
+        genCode.append(baseIndent + "self.__collectCov = True\n")
+        genCode.append(baseIndent + "self.__allBranches = set()\n")
+        genCode.append(baseIndent + "self.__allStatements = set()\n")
+        genCode.append(baseIndent + "self.__newBranches = set()\n")
+        genCode.append(baseIndent + "self.__newStatements = set()\n")
+        genCode.append(baseIndent + "self.__currBranches = set()\n")
+        genCode.append(baseIndent + "self.__currStatements = set()\n")
+        genCode.append(baseIndent + "self.__newCurrBranches = set()\n")
+        genCode.append(baseIndent + "self.__newCurrStatements = set()\n")
 
-genCode.append(baseIndent + "self.__actions_backup = list(self.__actions)\n")
-
-genCode.append("def restart(self):\n")
-if not config.nocover:
-    genCode.append(baseIndent + "self.__currBranches = set()\n")
-    genCode.append(baseIndent + "self.__currStatements = set()\n")
-    genCode.append(baseIndent + "self.__newCurrBranches = set()\n")
-    genCode.append(baseIndent + "self.__newCurrStatements = set()\n")
-    if config.coverreload:
-        genCode.append(baseIndent + "if self.__collectCov: self.__cov.collector.start()\n")
-for l in import_modules:
-    s = baseIndent + 'reload({})\n'.format(l)
-    genCode.append(s)
-if (not config.nocover) and config.coverreload:
-    genCode.append(baseIndent + "if self.__collectCov: self.__cov.collector.stop()\n")        
-    genCode.append(baseIndent + "if self.__collectCov: self.__updateCov()\n")
-genInitialization()
-
-genCode.append("def log(self):\n")
-if logSet != []:
-    genCode.append(baseIndent + "if self.__log == None:\n")
-    genCode.append(baseIndent + baseIndent + "return\n")
-    for l in logSet:
-        ls = l.split()
-        try:
-            level = int(ls[0])
-            lcode = l[l.find(ls[1]):]
-        except ValueError:
-            level = 0
-            lcode = l
-        genCode.append(baseIndent + "if (self.__log == 'All') or (self.__log >= " + str(level) + "):\n")
-        genCode.append(baseIndent + baseIndent + "try:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "self.__logAction(" + '"""' + lcode[:-1] + '""",' + lcode[:-1] + ")\n")
-        genCode.append(baseIndent + baseIndent + "except:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "pass\n")
+    genInitialization()
         
-else:
-    genCode.append(baseIndent + "pass\n")
-    
-genCode.append("def state(self):\n")
-st = baseIndent + "return [ "
-for p in poolSet:
-    st += "copy.deepcopy(" + poolPrefix + p.replace("%","") + "),"
-    st += "copy.deepcopy(" + poolPrefix + p.replace("%","") + "_used),"
-st = st[:-1]
-genCode.append(st + "]\n")
+    genCode.append(baseIndent + "self.__actions = []\n")
+    genCode.append(baseIndent + "self.__names = {}\n")
+    genCode.append(baseIndent + "self.__failure = None\n")
+    genCode.append(baseIndent + "self.__log = None\n")
+    genCode.append(baseIndent + "self.__logAction = self.logPrint\n")
+    for d in actDefs:
+        genCode.append(baseIndent + d + "\n")
 
-genCode.append("def backtrack(self,old):\n")
-n = 0
-for p in poolSet:
-    genCode.append(baseIndent + poolPrefix + p.replace("%","") + " = copy.deepcopy(old[" + str(n) + "])\n")
-    n += 1
-    genCode.append(baseIndent + poolPrefix + p.replace("%","") + "_used = copy.deepcopy(old[" + str(n) + "])\n")
-    n += 1
-if len(poolSet) == 0:
-    genCode.append(baseIndent + "pass\n")
+    genCode.append(baseIndent + "self.__actions_backup = list(self.__actions)\n")
 
-genCode.append("def check(self):\n")
-if propSet != []:
-    genCode.append(baseIndent + "try:\n")
+    genCode.append("def restart(self):\n")
     if not config.nocover:
-        genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.start()\n")
-    for (p, u) in propSet:
-        if u != []:
-            pr = baseIndent + baseIndent + "if True"
-            for use in u:
-                pr += " and (" + use + " != None)"
-            pr += ":\n"
-            genCode.append(pr)
+        genCode.append(baseIndent + "self.__currBranches = set()\n")
+        genCode.append(baseIndent + "self.__currStatements = set()\n")
+        genCode.append(baseIndent + "self.__newCurrBranches = set()\n")
+        genCode.append(baseIndent + "self.__newCurrStatements = set()\n")
+        if config.coverreload:
+            genCode.append(baseIndent + "if self.__collectCov: self.__cov.collector.start()\n")
+    for l in import_modules:
+        s = baseIndent + 'reload({})\n'.format(l)
+        genCode.append(s)
+    if (not config.nocover) and config.coverreload:
+        genCode.append(baseIndent + "if self.__collectCov: self.__cov.collector.stop()\n")        
+        genCode.append(baseIndent + "if self.__collectCov: self.__updateCov()\n")
+    genInitialization()
+
+    genCode.append("def log(self):\n")
+    if logSet != []:
+        genCode.append(baseIndent + "if self.__log == None:\n")
+        genCode.append(baseIndent + baseIndent + "return\n")
+        for l in logSet:
+            ls = l.split()
+            try:
+                level = int(ls[0])
+                lcode = l[l.find(ls[1]):]
+            except ValueError:
+                level = 0
+                lcode = l
+            genCode.append(baseIndent + "if (self.__log == 'All') or (self.__log >= " + str(level) + "):\n")
+            genCode.append(baseIndent + baseIndent + "try:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "self.__logAction(" + '"""' + lcode[:-1] + '""",' + lcode[:-1] + ")\n")
+            genCode.append(baseIndent + baseIndent + "except:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "pass\n")
             
-            genCode.append(baseIndent + baseIndent + baseIndent + "assert " + p + "\n")
-        else:
-            genCode.append (baseIndent + baseIndent + "assert " + p + "\n")
-    genCode.append(baseIndent + "except:\n")
-    genCode.append(baseIndent + baseIndent + "self.__failure = sys.exc_info()\n")
-    genCode.append(baseIndent + baseIndent + "return False\n")
+    else:
+        genCode.append(baseIndent + "pass\n")
+        
+    genCode.append("def state(self):\n")
+    st = baseIndent + "return [ "
+    for p in poolSet:
+        st += "copy.deepcopy(" + poolPrefix + p.replace("%","") + "),"
+        st += "copy.deepcopy(" + poolPrefix + p.replace("%","") + "_used),"
+    st = st[:-1]
+    genCode.append(st + "]\n")
+
+    genCode.append("def backtrack(self,old):\n")
+    n = 0
+    for p in poolSet:
+        genCode.append(baseIndent + poolPrefix + p.replace("%","") + " = copy.deepcopy(old[" + str(n) + "])\n")
+        n += 1
+        genCode.append(baseIndent + poolPrefix + p.replace("%","") + "_used = copy.deepcopy(old[" + str(n) + "])\n")
+        n += 1
+    if len(poolSet) == 0:
+        genCode.append(baseIndent + "pass\n")
+
+    genCode.append("def check(self):\n")
+    if propSet != []:
+        genCode.append(baseIndent + "try:\n")
+        if not config.nocover:
+            genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.start()\n")
+        for (p, u) in propSet:
+            if u != []:
+                pr = baseIndent + baseIndent + "if True"
+                for use in u:
+                    pr += " and (" + use + " != None)"
+                pr += ":\n"
+                genCode.append(pr)
+                
+                genCode.append(baseIndent + baseIndent + baseIndent + "assert " + p + "\n")
+            else:
+                genCode.append (baseIndent + baseIndent + "assert " + p + "\n")
+        genCode.append(baseIndent + "except:\n")
+        genCode.append(baseIndent + baseIndent + "self.__failure = sys.exc_info()\n")
+        genCode.append(baseIndent + baseIndent + "return False\n")
+        if not config.nocover:
+            genCode.append(baseIndent + "finally:\n")
+            genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.stop()\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "self.__updateCov()\n")
+    genCode.append(baseIndent + "return True\n")
+
+    for c in genCode:
+        outf.write(baseIndent + c.replace("True and (","("))
+
+    ######################## REQUIRED FOR PACKAGING TSTL ##########################
+    boilerplate = pkg_resources.resource_stream('src', 'static/boilerplate.py')
+    boilerplate_cov = pkg_resources.resource_stream('src', 'static/boilerplate_cov.py')
+    ###############################################################################
+
+    for l in boilerplate:
+        outf.write(baseIndent + l)
+
     if not config.nocover:
-        genCode.append(baseIndent + "finally:\n")
-        genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.stop()\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "self.__updateCov()\n")
-genCode.append(baseIndent + "return True\n")
+        for l in boilerplate_cov:
+            outf.write(baseIndent + l)    
 
-for c in genCode:
-    outf.write(baseIndent + c.replace("True and (","("))
+    outf.close()
 
-for l in open("boilerplate.py"):
-    outf.write(baseIndent + l)
-
-if not config.nocover:
-    for l in open("boilerplate_cov.py"):
-        outf.write(baseIndent + l)    
-
-outf.close()
+if __name__ == '__main__':
+    main()

@@ -5,3 +5,5 @@ build/*
 MANIFEST
 *.pyp*
 tstl.egg-info/
+sut.py
+temp.act
