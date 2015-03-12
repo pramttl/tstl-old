@@ -6,7 +6,7 @@ import sys, os
 setup(
     name='tstl',
     version='0.1',
-    description='Python package for template scripting testing language (TSTL) written by Dr. Alex Groce & Jervis Pinto. EECS, Oregon State University',
+    description='Template scripting testing language (TSTL) based on research by by Dr. Alex Groce & Jervis Pinto. EECS, Oregon State University',
     long_description=open('README.md').read(),
     packages=['src',],
     include_package_data = True,
