@@ -6,7 +6,7 @@ import sys, os
 setup(
     name='tstl',
     version='0.1',
-    description='A template scripting testing language (TSTL) based on research by Dr. Alex Groce & Dr. Jervis Pinto.',
+    description='Python package for template scripting testing language (TSTL) written by Dr. Alex Groce & Jervis Pinto. EECS, Oregon State University',
     long_description=open('README.md').read(),
     packages=['src',],
     include_package_data = True,
@@ -21,7 +21,7 @@ setup(
     keywords='testing tstl',
     classifiers=[
       "Intended Audience :: Developers",
-      "Development Status :: 4 - Alpha",
+      "Development Status :: 4 - Beta",
       "Programming Language :: Python :: 2",
       ],
     url='https://github.com/pramttl/pdir',
