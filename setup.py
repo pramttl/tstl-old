@@ -24,5 +24,5 @@ setup(
       "Development Status :: 4 - Beta",
       "Programming Language :: Python :: 2",
       ],
-    url='https://github.com/pramttl/pdir',
+    url='https://github.com/pramttl/tstl',
 )
