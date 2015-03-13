@@ -92,26 +92,35 @@ if not config.nocover:
 
 code = []
 import_modules = []  # we will call reload on these during restart
+inside_literal_block = False
 with open(config.act, 'r') as fp:
     for l in fp:
         if l[-1] != "\n":
             l = l + "\n"
         if l[0] == "#":
             continue # COMMENT
-        if l[0] == "@":
-            if l.find("@def guarded") == 0:
+
+        if re.match("<@", l):
+            inside_literal_block = True
+            continue
+        if re.match("@>", l):
+            inside_literal_block = False
+            continue
+
+        if re.match("@import", l):
+            outf.write(l[1:])
+            # import, so set up reloading
+            module_names = parse_import_line(l)
+            import_modules += module_names
+        elif inside_literal_block:
+            if re.match("def guarded", l):
                 # guarded function, append the speculation argument and continue
-                outf.write(l.replace("):",", SPECULATIVE_CALL = False):")[1:])
-            elif l.find("@import") == 0:
-                outf.write(l[1:])
-                # import, so set up reloading
-                module_names = parse_import_line(l)
-                import_modules += module_names
+                outf.write(l.replace("):",", SPECULATIVE_CALL = False):"))
             elif l.find("%COMMIT%") != -1:
                 # commit point in a guarded function definition
-                outf.write(l.replace("%COMMIT%","if SPECULATIVE_CALL: return True")[1:])
+                outf.write(l.replace("%COMMIT%","if SPECULATIVE_CALL: return True"))
             else:
-                outf.write(l[1:])
+                outf.write(l)
         elif l[0] == "*": # include action multiple times
             spos = l.find(" ")
             times = int(l[1:spos])
