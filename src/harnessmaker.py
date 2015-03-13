@@ -251,7 +251,10 @@ for l in logSet:
             refl = l.replace(pRaw,pRaw+"_REF")
     if refl != l:        
         for base in referenceMap:
-            refl = re.sub(base,referenceMap[base],refl)
+            if re.match(r"^[a-zA-Z_0-9]+$", refl):  # base is not a regex; treat it like a function name
+                refl = re.sub(r'\b'+base+r'\b',referenceMap[base],refl)
+            else:   # base is a regex; treat it like one
+                refl = re.sub(base,referenceMap[base],refl)
     newLogs.append(l)        
     if refl != l:
         newLogs.append(refl)
@@ -353,7 +356,10 @@ for corig in code:
             refC = refC.replace(pRaw,pRaw+"_REF")
 
     for base in referenceMap:
-        refC = re.sub(base,referenceMap[base],refC)
+        if re.match(r"^[a-zA-Z_0-9]+$", refC):  # base is not a regex; treat it like a function name
+            refC = re.sub(r'\b'+base+r'\b',referenceMap[base],refC)
+        else:   # base is a regex; treat it like one
+            refC = re.sub(base,referenceMap[base],refC)
 
     comparing = False
     for comp in compareSet:
