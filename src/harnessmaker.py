@@ -171,6 +171,9 @@ for c in code:
     elif cs[0] == "source:":
         sourceSet.append(cs[1])
     else:
+        if cs[0] == "expect:":
+            baseExpectSplit = c.split("expect: ")[1]
+            c = baseExpectSplit
         newCode.append(c)
 code = newCode
 
@@ -358,6 +361,12 @@ for corig in code:
     newC = newC.replace(":=","=")
     newC = newC.replace("~"+poolPrefix,poolPrefix)
 
+    expectCode = None
+    if newC.find(" ==> ") > -1:
+        codeExpectkSplit = newC.split(" ==> ")
+        newC = codeExpectkSplit[0] + "\n"
+        expectCode = codeExpectkSplit[1].rstrip('\n')
+
     refC = newC
     for p in poolSet:
         if p in refSet:
@@ -378,6 +387,12 @@ for corig in code:
                 refC = "__result_REF = " + refC
                 comparing = True
 
+    beforeSig = afterSig = checkSig = ""
+    if expectCode:
+        beforeSig = re.sub('([^\(]+)\(', "\\1_before(", expectCode, count=1)
+        afterSig = re.sub('([^\(]+)\(', "\\1_after(", expectCode, count=1)
+        checkSig = re.sub('([^\(]+)\(', "\\1_check(__before_res, __after_res, ", expectCode, count=1)
+
     genCode.append("def " + act + "(self):\n")
     if logSet != []:
         genCode.append(baseIndent + "self.log()\n")
@@ -385,7 +400,14 @@ for corig in code:
         genCode.append(baseIndent + "if self.__collectCov:\n")
         genCode.append(baseIndent + baseIndent + "self.__cov.start()\n")
         genCode.append(baseIndent + "try:\n")
+        if expectCode:
+            genCode.append(baseIndent + baseIndent + "__before_res = " + beforeSig + "\n")
         genCode.append(baseIndent + baseIndent + newC + "\n")
+        if expectCode:
+            genCode.append(baseIndent + baseIndent + "__after_res = " + afterSig + "\n")
+            genCode.append(baseIndent + baseIndent + "__check_res = " + checkSig + "\n")
+            genCode.append(baseIndent + baseIndent + "assert __check_res == True, \" check of (%s) for before and after values (%s) and (%s) failed\" % (\"" + expectCode + "\", __before_res, __after_res)\n")
+
         if okExcepts != "":
             genCode.append(baseIndent + "except (" + okExcepts + "):\n")
             genCode.append(baseIndent + baseIndent + "pass\n")
@@ -410,6 +432,8 @@ for corig in code:
 
     genCode.append("def " + guard + "(self):\n")
     genCode.append(baseIndent + "return " + guardCode + "\n")
+
+    genCode.append("\n")
 
     d = "self.__actions.append(("
     d += "'''" + newC[:-1] +" ''',"

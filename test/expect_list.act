@@ -1,0 +1,21 @@
+pool: %INT% 1
+pool: %LIST% 1
+
+<@
+def change_len_before(list, amount):
+  return len(list)
+
+def change_len_after(list, amount):
+  return len(list)
+
+def change_len_check(before, after, list, amount):
+  print "length before:", before, " - length after:", after, " -- amount:", amount
+  return after == before + amount
+@>
+
+%INT%:=%[1..4]%
+%LIST%:=[%INT%]
+
+expect: ~%LIST%.append(%INT%)               ==> change_len(~%LIST%, 1)
+expect: ~%LIST% = ~%LIST% + []              ==> change_len(~%LIST%, 0)
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> change_len(~%LIST%, 2)
