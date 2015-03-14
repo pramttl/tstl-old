@@ -111,6 +111,10 @@ def __candidates(self, t, n):
     return candidates
 
 def reduce(self, test, pred, pruneGuards = False, keepLast = True):
+    try:
+        test_before_reduce()
+    except:
+        pass
     if keepLast:
         tb = test[:-1]
         addLast = [test[-1]]

@@ -92,26 +92,35 @@ if not config.nocover:
 
 code = []
 import_modules = []  # we will call reload on these during restart
+inside_literal_block = False
 with open(config.act, 'r') as fp:
     for l in fp:
         if l[-1] != "\n":
             l = l + "\n"
         if l[0] == "#":
             continue # COMMENT
-        if l[0] == "@":
-            if l.find("@def guarded") == 0:
+
+        if re.match("<@", l):
+            inside_literal_block = True
+            continue
+        if re.match("@>", l):
+            inside_literal_block = False
+            continue
+
+        if re.match("@import", l):
+            outf.write(l[1:])
+            # import, so set up reloading
+            module_names = parse_import_line(l)
+            import_modules += module_names
+        elif inside_literal_block:
+            if re.match("def guarded", l):
                 # guarded function, append the speculation argument and continue
-                outf.write(l.replace("):",", SPECULATIVE_CALL = False):")[1:])
-            elif l.find("@import") == 0:
-                outf.write(l[1:])
-                # import, so set up reloading
-                module_names = parse_import_line(l)
-                import_modules += module_names
+                outf.write(l.replace("):",", SPECULATIVE_CALL = False):"))
             elif l.find("%COMMIT%") != -1:
                 # commit point in a guarded function definition
-                outf.write(l.replace("%COMMIT%","if SPECULATIVE_CALL: return True")[1:])
+                outf.write(l.replace("%COMMIT%","if SPECULATIVE_CALL: return True"))
             else:
-                outf.write(l[1:])
+                outf.write(l)
         elif l[0] == "*": # include action multiple times
             spos = l.find(" ")
             times = int(l[1:spos])
@@ -162,6 +171,9 @@ for c in code:
     elif cs[0] == "source:":
         sourceSet.append(cs[1])
     else:
+        if cs[0] == "expect:":
+            baseExpectSplit = c.split("expect: ")[1]
+            c = baseExpectSplit
         newCode.append(c)
 code = newCode
 
@@ -251,7 +263,10 @@ for l in logSet:
             refl = l.replace(pRaw,pRaw+"_REF")
     if refl != l:        
         for base in referenceMap:
-            refl = re.sub(base,referenceMap[base],refl)
+            if re.match(r"^[a-zA-Z_0-9]+$", refl):  # base is not a regex; treat it like a function name
+                refl = re.sub(r'\b'+base+r'\b',referenceMap[base],refl)
+            else:   # base is a regex; treat it like one
+                refl = re.sub(base,referenceMap[base],refl)
     newLogs.append(l)        
     if refl != l:
         newLogs.append(refl)
@@ -346,6 +361,12 @@ for corig in code:
     newC = newC.replace(":=","=")
     newC = newC.replace("~"+poolPrefix,poolPrefix)
 
+    expectCode = None
+    if newC.find(" ==> ") > -1:
+        codeExpectkSplit = newC.split(" ==> ")
+        newC = codeExpectkSplit[0] + "\n"
+        expectCode = codeExpectkSplit[1].rstrip('\n')
+
     refC = newC
     for p in poolSet:
         if p in refSet:
@@ -353,7 +374,10 @@ for corig in code:
             refC = refC.replace(pRaw,pRaw+"_REF")
 
     for base in referenceMap:
-        refC = re.sub(base,referenceMap[base],refC)
+        if re.match(r"^[a-zA-Z_0-9]+$", refC):  # base is not a regex; treat it like a function name
+            refC = re.sub(r'\b'+base+r'\b',referenceMap[base],refC)
+        else:   # base is a regex; treat it like one
+            refC = re.sub(base,referenceMap[base],refC)
 
     comparing = False
     for comp in compareSet:
@@ -363,18 +387,42 @@ for corig in code:
                 refC = "__result_REF = " + refC
                 comparing = True
 
+    beforeSig = afterSig = checkSig = ""
+    if expectCode:
+        beforeSig = re.sub('([^\(]+)\(', "\\1_before(", expectCode, count=1)
+        afterSig = re.sub('([^\(]+)\(', "\\1_after(", expectCode, count=1)
+        checkSig = re.sub('([^\(]+)\(', "\\1_check(__before_res, __after_res, ", expectCode, count=1)
+
     genCode.append("def " + act + "(self):\n")
     if logSet != []:
         genCode.append(baseIndent + "self.log()\n")
     if not config.nocover:
         genCode.append(baseIndent + "if self.__collectCov:\n")
         genCode.append(baseIndent + baseIndent + "self.__cov.start()\n")
+
         genCode.append(baseIndent + "try:\n")
+        genCode.append(baseIndent + baseIndent + "test_before_each()\n")
+        genCode.append(baseIndent + "except:\n")
+        genCode.append(baseIndent + baseIndent + "pass\n")
+
+        genCode.append(baseIndent + "try:\n")
+        if expectCode:
+            genCode.append(baseIndent + baseIndent + "__before_res = " + beforeSig + "\n")
         genCode.append(baseIndent + baseIndent + newC + "\n")
+        if expectCode:
+            genCode.append(baseIndent + baseIndent + "__after_res = " + afterSig + "\n")
+            genCode.append(baseIndent + baseIndent + "__check_res = " + checkSig + "\n")
+            genCode.append(baseIndent + baseIndent + "assert __check_res == True, \" check of (%s) for before and after values (%s) and (%s) failed\" % (\"" + expectCode + "\", __before_res, __after_res)\n")
+
         if okExcepts != "":
             genCode.append(baseIndent + "except (" + okExcepts + "):\n")
             genCode.append(baseIndent + baseIndent + "pass\n")
+
         genCode.append(baseIndent + "finally:\n")
+        genCode.append(baseIndent + baseIndent + "try:\n")
+        genCode.append(baseIndent + baseIndent + baseIndent + "test_after_each()\n")
+        genCode.append(baseIndent + baseIndent + "except:\n")
+        genCode.append(baseIndent + baseIndent + baseIndent + "pass\n")
         genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
         genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.stop()\n")
         genCode.append(baseIndent + baseIndent + baseIndent + "self.__updateCov()\n")
@@ -395,6 +443,8 @@ for corig in code:
 
     genCode.append("def " + guard + "(self):\n")
     genCode.append(baseIndent + "return " + guardCode + "\n")
+
+    genCode.append("\n")
 
     d = "self.__actions.append(("
     d += "'''" + newC[:-1] +" ''',"
@@ -435,6 +485,10 @@ def genInitialization():
 
 def main():
     genCode.append("def __init__(self):\n")
+    genCode.append(baseIndent + "try:\n")
+    genCode.append(baseIndent + baseIndent + "test_before_all()\n")
+    genCode.append(baseIndent + "except:\n")
+    genCode.append(baseIndent + baseIndent + "pass\n")
     genCode.append(baseIndent + "self.__features = []\n")
     for f in featureSet:
         genCode.append(baseIndent + 'self.__features.append(r"' + f + '")\n')
