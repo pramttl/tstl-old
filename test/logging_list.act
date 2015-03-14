@@ -1,0 +1,48 @@
+@import logging
+
+pool: %INT% 10
+pool: %LIST% 1
+
+<@
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.CRITICAL)
+
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+@>
+
+<@
+def test_before_all():
+  logger.setLevel(logging.CRITICAL)
+
+def test_before_each():
+  pass
+
+def test_after_each():
+  pass
+
+def test_before_reduce():
+  logger.setLevel(logging.DEBUG)
+@>
+
+<@
+def change_len_before(list, amount):
+  return len(list)
+
+def change_len_after(list, amount):
+  return len(list)
+
+def change_len_check(before, after, list, amount):
+  logger.debug("length before: %d - length after: %d -- should have changed %d", before, after, amount)
+  return after == before + amount
+@>
+
+%INT%:=%[1..4]%
+%LIST%:=[%INT%]
+
+expect: ~%LIST%.append(%INT%)               ==> change_len(~%LIST%, 1)
+expect: ~%LIST% = ~%LIST% + []              ==> change_len(~%LIST%, 0)
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> change_len(~%LIST%, 2)
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> change_len(~%LIST%, 3)

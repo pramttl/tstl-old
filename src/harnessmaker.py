@@ -399,6 +399,12 @@ for corig in code:
     if not config.nocover:
         genCode.append(baseIndent + "if self.__collectCov:\n")
         genCode.append(baseIndent + baseIndent + "self.__cov.start()\n")
+
+        genCode.append(baseIndent + "try:\n")
+        genCode.append(baseIndent + baseIndent + "test_before_each()\n")
+        genCode.append(baseIndent + "except:\n")
+        genCode.append(baseIndent + baseIndent + "pass\n")
+
         genCode.append(baseIndent + "try:\n")
         if expectCode:
             genCode.append(baseIndent + baseIndent + "__before_res = " + beforeSig + "\n")
@@ -411,7 +417,12 @@ for corig in code:
         if okExcepts != "":
             genCode.append(baseIndent + "except (" + okExcepts + "):\n")
             genCode.append(baseIndent + baseIndent + "pass\n")
+
         genCode.append(baseIndent + "finally:\n")
+        genCode.append(baseIndent + baseIndent + "try:\n")
+        genCode.append(baseIndent + baseIndent + baseIndent + "test_after_each()\n")
+        genCode.append(baseIndent + baseIndent + "except:\n")
+        genCode.append(baseIndent + baseIndent + baseIndent + "pass\n")
         genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
         genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.stop()\n")
         genCode.append(baseIndent + baseIndent + baseIndent + "self.__updateCov()\n")
@@ -474,6 +485,10 @@ def genInitialization():
 
 def main():
     genCode.append("def __init__(self):\n")
+    genCode.append(baseIndent + "try:\n")
+    genCode.append(baseIndent + baseIndent + "test_before_all()\n")
+    genCode.append(baseIndent + "except:\n")
+    genCode.append(baseIndent + baseIndent + "pass\n")
     genCode.append(baseIndent + "self.__features = []\n")
     for f in featureSet:
         genCode.append(baseIndent + 'self.__features.append(r"' + f + '")\n')

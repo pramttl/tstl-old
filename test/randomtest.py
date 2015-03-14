@@ -86,7 +86,7 @@ while (config.maxtests == -1) or (ntests < config.maxtests):
                     print step
                 print "EXITING DUE TO FAILED TEST"
                 print len(test)
-                print "REDUCING..."
+                print "\n\nREDUCING..."
                 newtest = t.reduce(full, t.fails)
                 t.restart()
                 t.logAll()
