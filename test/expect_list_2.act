@@ -1,0 +1,22 @@
+pool: %INT% 1
+pool: %LIST% 1
+
+@import harness_expectations as expect_to
+
+%INT%:=%[1..4]%
+%LIST%:=[%INT%]
+
+expect: ~%LIST%.append(%INT%)               ==> expect_to.change(len(~%LIST%), by=1)
+expect: ~%LIST% = ~%LIST% + []              ==> expect_to.change(len(~%LIST%), by=0)
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> expect_to.change(len(~%LIST%), by=2)
+
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> expect_to.not_change(len(~%LIST%), by=0)
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> expect_to.not_change(len(~%LIST%), by=1)
+expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> expect_to.not_change(len(~%LIST%), by=3)
+
+expect: ~%LIST%[:] = []                     ==> expect_to.change(len(~%LIST%), to_value=0)
+expect: ~%LIST%[:] = [%INT%, %INT%]         ==> expect_to.change(len(~%LIST%), to_value=2)
+
+expect: ~%LIST%[:] = [%INT%, %INT%]         ==> expect_to.not_change(len(~%LIST%), to_value=1)
+expect: ~%LIST%[:] = [%INT%, %INT%]         ==> expect_to.not_change(len(~%LIST%), to_value=3)
+
