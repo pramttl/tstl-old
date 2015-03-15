@@ -7,12 +7,26 @@ from collections import namedtuple
 # For packaging harnessmaker to tstl package
 import pkg_resources
 
+############## GLOBAL VARIABLES #############
+# These varaibles will be modified when needed
+
+config = None
+poolSet = {}
+initSet = []
+baseIndent = ""
+poolPrefix = None
+genCode = None
+#############################################
+
 def parse_args():
+    """
+    To parse command line arguments. Makes use of built-in python library argprase
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('-a', '--act', type=str, default=None,
                         help='Path to the .act file.')
     parser.add_argument('-t', '--target', type=str, default="sut.py",
-                        help='Name of the file containing the generated harness core (default = sut.py.')
+                        help='Name of the file containing the generated harness core (default = sut.py)')
     parser.add_argument('-c', '--classname', type=str, default='t',
                         help='Name of the class representing the SUT (default=t)')
     parser.add_argument('-n', '--nocover', action='store_true',
@@ -23,6 +37,7 @@ def parse_args():
                         help='Generate coverage for SUT initialization behavior.')
     parsed_args = parser.parse_args(sys.argv[1:])
     return (parsed_args, parser)
+
 
 def make_config(pargs, parser):
     """
@@ -48,13 +63,14 @@ def make_config(pargs, parser):
     nt_config = Config(*arg_list)
     return nt_config   
     
-parsed_args, parser = parse_args()
-config = make_config(parsed_args, parser)
-print('Generating harness core using config={}'.format(config))
-
-outf = open(config.target,'w')
 
 def parse_import_line(line):
+    """
+    For PYTHON only
+    ---------------
+    Parses an import line in the raw python code.
+    There are 4 possible kinds of import lines in python.
+    """
     raw = line.split('import ')
     assert len(raw) == 2, 'import statement error in line --> {}'.format(line)
     # from X import Y
@@ -81,105 +97,11 @@ def parse_import_line(line):
     assert len(mod_names) > 0
     return mod_names
 
-# Handle raw python, imports
-
-outf.write("import copy\n")
-outf.write("import traceback\n")
-outf.write("import re\n")
-outf.write("import sys\n")
-if not config.nocover:
-    outf.write("import coverage\n")
-
-code = []
-import_modules = []  # we will call reload on these during restart
-inside_literal_block = False
-with open(config.act, 'r') as fp:
-    for l in fp:
-        if l[-1] != "\n":
-            l = l + "\n"
-        if l[0] == "#":
-            continue # COMMENT
-
-        if re.match("<@", l):
-            inside_literal_block = True
-            continue
-        if re.match("@>", l):
-            inside_literal_block = False
-            continue
-
-        if re.match("@import", l):
-            outf.write(l[1:])
-            # import, so set up reloading
-            module_names = parse_import_line(l)
-            import_modules += module_names
-        elif inside_literal_block:
-            if re.match("def guarded", l):
-                # guarded function, append the speculation argument and continue
-                outf.write(l.replace("):",", SPECULATIVE_CALL = False):"))
-            elif l.find("%COMMIT%") != -1:
-                # commit point in a guarded function definition
-                outf.write(l.replace("%COMMIT%","if SPECULATIVE_CALL: return True"))
-            else:
-                outf.write(l)
-        elif l[0] == "*": # include action multiple times
-            spos = l.find(" ")
-            times = int(l[1:spos])
-            for n in xrange(0,times):
-                code.append(l[spos:])
-        else:
-            code.append(l)
-assert len(code) > 0, 'No non-comment lines found in .act file'
-
-# Build up the pool, initialization values
-
-poolPrefix = "self.p_"
-
-sourceSet = []
-poolSet = {}
-initSet = []
-propSet = []
-refSet = []
-compareSet = []
-featureSet = []
-logSet = []
-referenceMap = {}
-
-newCode = []
-for c in code:
-    cs = c.split()
-    if cs == []:
-        continue
-    elif cs[0] == "init:":
-        initSet.append(c.replace("init: ",""))
-    elif cs[0] == "log:":
-        logSet.append(c.replace("log: ",""))
-    elif cs[0] == "property:":
-        propSet.append(c.replace("property: ",""))
-    elif cs[0] == "pool:":
-        poolSet[cs[1]] = int(cs[2])
-        if (len(cs)>3) and (cs[3] == "REF"):
-            refSet.append(cs[1])
-            poolSet[cs[1]+"_REF"] = int(cs[2])
-    elif cs[0] == "reference:":
-        baseRefSplit = c.split("reference: ")[1]
-        rs = baseRefSplit.split(" ==> ")
-        referenceMap[rs[0]] = rs[1][:-1]
-    elif cs[0] == "feature:":
-        featureSet.append(cs[1])
-    elif cs[0] == "compare:":
-        compareSet.append(cs[1])        
-    elif cs[0] == "source:":
-        sourceSet.append(cs[1])
-    else:
-        if cs[0] == "expect:":
-            baseExpectSplit = c.split("expect: ")[1]
-            c = baseExpectSplit
-        newCode.append(c)
-code = newCode
-
-# Expand pool references
 
 def expandPool(original):
+    """
+    Expand pool references
+    """
     newVersion = []
     for c in original:
         for p in poolSet:
@@ -188,14 +110,11 @@ def expandPool(original):
         newVersion.append(c)
     return newVersion
 
-code = expandPool(code)
-propSet = expandPool(propSet)
-initSet = expandPool(initSet)
-logSet = expandPool(logSet)
-    
-# Expand all range expressions
 
 def expandRange(original):
+    """
+    Expand all range expressions
+    """
     current = original
     anyChanged = True
     while anyChanged:
@@ -217,68 +136,6 @@ def expandRange(original):
         current = newVersion
     return newVersion
 
-code = expandRange(code)
-propSet = expandRange(propSet)
-initSet = expandRange(initSet)
-logSet = expandRange(logSet)
-
-# Finally go ahead and directly reference pools in preds and initalizers
-
-newProps = []
-for c in propSet:
-    newProps.append((c,[]))
-propSet = newProps
-
-for p in poolSet:
-    newProps = []
-    for (c,u) in propSet:
-        uses = u
-        found = c.find(p)
-        while (found != -1):
-            use = c[found:c.find("]", found)+1]
-            use = use.replace(p + " ", poolPrefix + p.replace("%",""))
-            uses.append(use)
-            found = c.find(p,found+1)
-        newProps.append((c.replace(p + " ", poolPrefix + p.replace("%","")),uses))
-    propSet = newProps
-
-for p in poolSet:
-    newInits = []
-    for c in initSet:
-        newInits.append(c.replace(p + " ", poolPrefix + p.replace("%","")))
-    initSet = newInits
-
-for p in poolSet:
-    newLogs = []
-    for c in logSet:
-        newLogs.append(c.replace(p + " ", poolPrefix + p.replace("%","")))
-    logSet = newLogs
-
-newLogs = []
-for l in logSet:
-    refl = l
-    for p in poolSet:
-        if p in refSet:
-            pRaw = poolPrefix + p.replace("%","")
-            refl = l.replace(pRaw,pRaw+"_REF")
-    if refl != l:        
-        for base in referenceMap:
-            if re.match(r"^[a-zA-Z_0-9]+$", refl):  # base is not a regex; treat it like a function name
-                refl = re.sub(r'\b'+base+r'\b',referenceMap[base],refl)
-            else:   # base is a regex; treat it like one
-                refl = re.sub(base,referenceMap[base],refl)
-    newLogs.append(l)        
-    if refl != l:
-        newLogs.append(refl)
-logSet = newLogs
-
-# Now generate the action and guard code
-
-outf.write("class " + config.classname + "(object):\n")
-
-genCode = []
-
-baseIndent = "   "
 
 actCount = 0
 def genAct():
@@ -294,170 +151,11 @@ def genGuard():
     guardCount += 1
     return s
 
-actDefs = []
-
-for corig in code:
-    act = genAct()
-    guard = genGuard()
-
-    guardCode = "True"
-    guardConds = []
-
-    changes = []
-
-    okExcepts = ""
-    if corig[0] == "{":
-        c = corig[corig.find("}")+1:]
-        while c[0] == " ":
-            c = c[1:]
-        for e in corig[1:corig.find("}")].split(","):
-            okExcepts += e + ","
-        okExcepts = okExcepts[:-1]
-    else:
-        c = corig
-
-    newC = c
-    eqPos = c.find(":=")
-    if eqPos == -1:
-        eqPos = 0
-        
-    lhsUse = []
-    rhsUse = []
-
-    for p in poolSet:
-        newC = newC.replace(p + " ", poolPrefix + p.replace("%",""))
-        newC = newC.replace(p, poolPrefix + p.replace("%",""))
-        plhs = []
-        prhs = []
-        found = c.find(p)
-        while (found != -1):
-            use = c[found:c.find("]", found)+1]
-            twiddle = (found > 0) and (c[found-1]=='~')
-            if (found >= eqPos):
-                prhs.append((use,twiddle))
-            else:
-                plhs.append(use)
-            found = c.find(p,found+1)
-        for assign in plhs:
-            g = assign
-            g = g.replace("%","")
-            g = poolPrefix + g
-            g = g.replace(" ","")
-            gval = g
-            g = g.replace("[", "_used[")
-            gguard = "((" + g + ") or (" + gval + " == None))"
-            guardConds.append(gguard)
-            changes.append(g + "=False")
-        for (used,twiddle) in prhs:
-            g = used
-            g = g.replace("%","")
-            g = poolPrefix + g
-            g = g.replace(" ","")
-            if (not twiddle):
-                changes.append(g.replace("[","_used[") + "=True")
-            g += " != None"
-            guardConds.append(g)
-
-    newC = newC.replace(":=","=")
-    newC = newC.replace("~"+poolPrefix,poolPrefix)
-
-    expectCode = None
-    if newC.find(" ==> ") > -1:
-        codeExpectkSplit = newC.split(" ==> ")
-        newC = codeExpectkSplit[0] + "\n"
-        expectCode = codeExpectkSplit[1].rstrip('\n')
-
-    refC = newC
-    for p in poolSet:
-        if p in refSet:
-            pRaw = poolPrefix + p.replace("%","")
-            refC = refC.replace(pRaw,pRaw+"_REF")
-
-    for base in referenceMap:
-        if re.match(r"^[a-zA-Z_0-9]+$", refC):  # base is not a regex; treat it like a function name
-            refC = re.sub(r'\b'+base+r'\b',referenceMap[base],refC)
-        else:   # base is a regex; treat it like one
-            refC = re.sub(base,referenceMap[base],refC)
-
-    comparing = False
-    for comp in compareSet:
-        if re.match(".*" + comp + ".*", newC):
-            if refC != newC:
-                newC = "__result = " + newC
-                refC = "__result_REF = " + refC
-                comparing = True
-
-    beforeSig = afterSig = checkSig = ""
-    if expectCode:
-        beforeSig = re.sub('([^\(]+)\(', "\\1_before(", expectCode, count=1)
-        afterSig = re.sub('([^\(]+)\(', "\\1_after(", expectCode, count=1)
-        checkSig = re.sub('([^\(]+)\(', "\\1_check(__before_res, __after_res, ", expectCode, count=1)
-
-    genCode.append("def " + act + "(self):\n")
-    if logSet != []:
-        genCode.append(baseIndent + "self.log()\n")
-    if not config.nocover:
-        genCode.append(baseIndent + "if self.__collectCov:\n")
-        genCode.append(baseIndent + baseIndent + "self.__cov.start()\n")
-
-        genCode.append(baseIndent + "try:\n")
-        genCode.append(baseIndent + baseIndent + "test_before_each()\n")
-        genCode.append(baseIndent + "except:\n")
-        genCode.append(baseIndent + baseIndent + "pass\n")
-
-        genCode.append(baseIndent + "try:\n")
-        if expectCode:
-            genCode.append(baseIndent + baseIndent + "__before_res = " + beforeSig + "\n")
-        genCode.append(baseIndent + baseIndent + newC + "\n")
-        if expectCode:
-            genCode.append(baseIndent + baseIndent + "__after_res = " + afterSig + "\n")
-            genCode.append(baseIndent + baseIndent + "__check_res = " + checkSig + "\n")
-            genCode.append(baseIndent + baseIndent + "assert __check_res == True, \" check of (%s) for before and after values (%s) and (%s) failed\" % (\"" + expectCode + "\", __before_res, __after_res)\n")
-
-        if okExcepts != "":
-            genCode.append(baseIndent + "except (" + okExcepts + "):\n")
-            genCode.append(baseIndent + baseIndent + "pass\n")
-
-        genCode.append(baseIndent + "finally:\n")
-        genCode.append(baseIndent + baseIndent + "try:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "test_after_each()\n")
-        genCode.append(baseIndent + baseIndent + "except:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "pass\n")
-        genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.stop()\n")
-        genCode.append(baseIndent + baseIndent + baseIndent + "self.__updateCov()\n")
-    else:
-        genCode.append(baseIndent + newC + "\n")
-    if refC != newC:
-        genCode.append(baseIndent + refC + "\n")
-        if comparing:
-            genCode.append(baseIndent + "assert __result == __result_REF, \" (%s) == (%s) \" % (__result, __result_REF)\n")
-    for ch in changes:
-        genCode.append(baseIndent + ch + "\n")
-
-    for g in guardConds:
-        guardCode += " and (" + g + ")"
-
-    if newC.find("guarded") == 0:
-        guardCode += " and (" + newC.replace(")\n",",True))")
-
-    genCode.append("def " + guard + "(self):\n")
-    genCode.append(baseIndent + "return " + guardCode + "\n")
-
-    genCode.append("\n")
-
-    d = "self.__actions.append(("
-    d += "'''" + newC[:-1] +" ''',"
-    d += "self." + guard + ","
-    d += "self." + act + "))\n"
-    actDefs.append(d)
-    d = "self.__names[" + "'''" + newC[:-1] + " '''] = ("
-    d += "'''" + newC[:-1] + " ''',"
-    d += "self." + guard + ","
-    d += "self." + act + ")\n"
-    actDefs.append(d)
 
 def genInitialization():
+    """
+    Generate initialization from configuration, poolSet
+    """
     for p in poolSet:
         s = baseIndent
         s += poolPrefix + p.replace("%","") + " = {}"
@@ -484,6 +182,357 @@ def genInitialization():
 
 
 def main():
+
+    global config;
+    global poolSet;
+    global initSet;
+    global baseIndent;
+    global poolPrefix;
+    global genCode;
+
+    parsed_args, parser = parse_args()
+
+    config = make_config(parsed_args, parser)
+    print('Generating harness core using config={}'.format(config))
+    outf = open(config.target,'w')
+
+    # Handle raw python, imports
+    outf.write("import copy\n")
+    outf.write("import traceback\n")
+    outf.write("import re\n")
+    outf.write("import sys\n")
+    if not config.nocover:
+        outf.write("import coverage\n")
+
+    code = []
+    import_modules = []  # we will call reload on these during restart
+    inside_literal_block = False
+
+    with open(config.act, 'r') as fp:
+        for l in fp:
+            if l[-1] != "\n":
+                l += "\n"
+
+            if l[0] == "#":
+                continue # COMMENT
+
+            if re.match("<@", l):
+                inside_literal_block = True
+                continue
+
+            if re.match("@>", l):
+                inside_literal_block = False
+                continue
+
+            if re.match("@import", l):
+                outf.write(l[1:])
+                # import, so set up reloading
+                module_names = parse_import_line(l)
+                import_modules += module_names
+
+            if inside_literal_block:
+                if re.match("def guarded", l):
+                    # guarded function, append the speculation argument and continue
+                    outf.write(l.replace("):",", SPECULATIVE_CALL = False):"))
+                elif l.find("%COMMIT%") != -1:
+                    # commit point in a guarded function definition
+                    outf.write(l.replace("%COMMIT%","if SPECULATIVE_CALL: return True"))
+                else:
+                    outf.write(l)
+
+            elif l[0] == "*": # include action multiple times
+                spos = l.find(" ")
+                times = int(l[1:spos])
+                for n in xrange(0,times):
+                    code.append(l[spos:])
+            else:
+                code.append(l)
+
+    assert len(code) > 0, 'No non-comment lines found in .act file'
+
+    # Build up the pool, initialization values
+
+    poolPrefix = "self.p_"
+
+    sourceSet = []
+
+    initSet = []
+    propSet = []
+    refSet = []
+    compareSet = []
+    featureSet = []
+    logSet = []
+    referenceMap = {}
+
+    newCode = []
+    for c in code:
+        cs = c.split()
+        if cs == []:
+            continue
+        elif cs[0] == "init:":
+            initSet.append(c.replace("init: ",""))
+        elif cs[0] == "log:":
+            logSet.append(c.replace("log: ",""))
+        elif cs[0] == "property:":
+            propSet.append(c.replace("property: ",""))
+        elif cs[0] == "pool:":
+            poolSet[cs[1]] = int(cs[2])
+            if (len(cs)>3) and (cs[3] == "REF"):
+                refSet.append(cs[1])
+                poolSet[cs[1]+"_REF"] = int(cs[2])
+        elif cs[0] == "reference:":
+            baseRefSplit = c.split("reference: ")[1]
+            rs = baseRefSplit.split(" ==> ")
+            referenceMap[rs[0]] = rs[1][:-1]
+        elif cs[0] == "feature:":
+            featureSet.append(cs[1])
+        elif cs[0] == "compare:":
+            compareSet.append(cs[1])        
+        elif cs[0] == "source:":
+            sourceSet.append(cs[1])
+        else:
+            if cs[0] == "expect:":
+                baseExpectSplit = c.split("expect: ")[1]
+                c = baseExpectSplit
+            newCode.append(c)
+    code = newCode
+
+    # ------------------------------------------ #
+    code = expandPool(code)
+    propSet = expandPool(propSet)
+    initSet = expandPool(initSet)
+    logSet = expandPool(logSet)
+
+    code = expandRange(code)
+    propSet = expandRange(propSet)
+    initSet = expandRange(initSet)
+    logSet = expandRange(logSet)
+
+    # Finally go ahead and directly reference pools in preds and initalizers
+    newProps = []
+    for c in propSet:
+        newProps.append((c,[]))
+    propSet = newProps
+
+    for p in poolSet:
+        newProps = []
+        for (c,u) in propSet:
+            uses = u
+            found = c.find(p)
+            while (found != -1):
+                use = c[found:c.find("]", found)+1]
+                use = use.replace(p + " ", poolPrefix + p.replace("%",""))
+                uses.append(use)
+                found = c.find(p,found+1)
+            newProps.append((c.replace(p + " ", poolPrefix + p.replace("%","")),uses))
+        propSet = newProps
+
+    for p in poolSet:
+        newInits = []
+        for c in initSet:
+            newInits.append(c.replace(p + " ", poolPrefix + p.replace("%","")))
+        initSet = newInits
+
+    for p in poolSet:
+        newLogs = []
+        for c in logSet:
+            newLogs.append(c.replace(p + " ", poolPrefix + p.replace("%","")))
+        logSet = newLogs
+
+    # ------------------------------------------ #
+    newLogs = []
+    for l in logSet:
+        refl = l
+        for p in poolSet:
+            if p in refSet:
+                pRaw = poolPrefix + p.replace("%","")
+                refl = l.replace(pRaw,pRaw+"_REF")
+        if refl != l:        
+            for base in referenceMap:
+                if re.match(r"^[a-zA-Z_0-9]+$", refl):  # base is not a regex; treat it like a function name
+                    refl = re.sub(r'\b'+base+r'\b',referenceMap[base],refl)
+                else:   # base is a regex; treat it like one
+                    refl = re.sub(base,referenceMap[base],refl)
+        newLogs.append(l)        
+        if refl != l:
+            newLogs.append(refl)
+    logSet = newLogs
+
+    # Now generate the action and guard code
+
+    outf.write("class " + config.classname + "(object):\n")
+
+    genCode = []
+
+    baseIndent = "   "
+
+
+    # ------------------------------------------ #
+    actDefs = []
+
+    for corig in code:
+        act = genAct()
+        guard = genGuard()
+
+        guardCode = "True"
+        guardConds = []
+
+        changes = []
+
+        okExcepts = ""
+        if corig[0] == "{":
+            c = corig[corig.find("}")+1:]
+            while c[0] == " ":
+                c = c[1:]
+            for e in corig[1:corig.find("}")].split(","):
+                okExcepts += e + ","
+            okExcepts = okExcepts[:-1]
+        else:
+            c = corig
+
+        newC = c
+        eqPos = c.find(":=")
+        if eqPos == -1:
+            eqPos = 0
+            
+        lhsUse = []
+        rhsUse = []
+
+        for p in poolSet:
+            newC = newC.replace(p + " ", poolPrefix + p.replace("%",""))
+            newC = newC.replace(p, poolPrefix + p.replace("%",""))
+            plhs = []
+            prhs = []
+            found = c.find(p)
+            while (found != -1):
+                use = c[found:c.find("]", found)+1]
+                twiddle = (found > 0) and (c[found-1]=='~')
+                if (found >= eqPos):
+                    prhs.append((use,twiddle))
+                else:
+                    plhs.append(use)
+                found = c.find(p,found+1)
+            for assign in plhs:
+                g = assign
+                g = g.replace("%","")
+                g = poolPrefix + g
+                g = g.replace(" ","")
+                gval = g
+                g = g.replace("[", "_used[")
+                gguard = "((" + g + ") or (" + gval + " == None))"
+                guardConds.append(gguard)
+                changes.append(g + "=False")
+            for (used,twiddle) in prhs:
+                g = used
+                g = g.replace("%","")
+                g = poolPrefix + g
+                g = g.replace(" ","")
+                if (not twiddle):
+                    changes.append(g.replace("[","_used[") + "=True")
+                g += " != None"
+                guardConds.append(g)
+
+        newC = newC.replace(":=","=")
+        newC = newC.replace("~"+poolPrefix,poolPrefix)
+
+        expectCode = None
+        if newC.find(" ==> ") > -1:
+            codeExpectkSplit = newC.split(" ==> ")
+            newC = codeExpectkSplit[0] + "\n"
+            expectCode = codeExpectkSplit[1].rstrip('\n')
+
+        refC = newC
+        for p in poolSet:
+            if p in refSet:
+                pRaw = poolPrefix + p.replace("%","")
+                refC = refC.replace(pRaw,pRaw+"_REF")
+
+        for base in referenceMap:
+            if re.match(r"^[a-zA-Z_0-9]+$", refC):  # base is not a regex; treat it like a function name
+                refC = re.sub(r'\b'+base+r'\b',referenceMap[base],refC)
+            else:   # base is a regex; treat it like one
+                refC = re.sub(base,referenceMap[base],refC)
+
+        comparing = False
+        for comp in compareSet:
+            if re.match(".*" + comp + ".*", newC):
+                if refC != newC:
+                    newC = "__result = " + newC
+                    refC = "__result_REF = " + refC
+                    comparing = True
+
+        beforeSig = afterSig = checkSig = ""
+        if expectCode:
+            beforeSig = re.sub('([^\(]+)\(', "\\1_before(", expectCode, count=1)
+            afterSig = re.sub('([^\(]+)\(', "\\1_after(", expectCode, count=1)
+            checkSig = re.sub('([^\(]+)\(', "\\1_check(__before_res, __after_res, ", expectCode, count=1)
+
+        genCode.append("def " + act + "(self):\n")
+        if logSet != []:
+            genCode.append(baseIndent + "self.log()\n")
+        if not config.nocover:
+            genCode.append(baseIndent + "if self.__collectCov:\n")
+            genCode.append(baseIndent + baseIndent + "self.__cov.start()\n")
+
+            genCode.append(baseIndent + "try:\n")
+            genCode.append(baseIndent + baseIndent + "test_before_each()\n")
+            genCode.append(baseIndent + "except:\n")
+            genCode.append(baseIndent + baseIndent + "pass\n")
+
+            genCode.append(baseIndent + "try:\n")
+            if expectCode:
+                genCode.append(baseIndent + baseIndent + "__before_res = " + beforeSig + "\n")
+            genCode.append(baseIndent + baseIndent + newC + "\n")
+            if expectCode:
+                genCode.append(baseIndent + baseIndent + "__after_res = " + afterSig + "\n")
+                genCode.append(baseIndent + baseIndent + "__check_res = " + checkSig + "\n")
+                genCode.append(baseIndent + baseIndent + "assert __check_res == True, \" check of (%s) for before and after values (%s) and (%s) failed\" % (\"" + expectCode + "\", __before_res, __after_res)\n")
+
+            if okExcepts != "":
+                genCode.append(baseIndent + "except (" + okExcepts + "):\n")
+                genCode.append(baseIndent + baseIndent + "pass\n")
+
+            genCode.append(baseIndent + "finally:\n")
+            genCode.append(baseIndent + baseIndent + "try:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "test_after_each()\n")
+            genCode.append(baseIndent + baseIndent + "except:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "pass\n")
+            genCode.append(baseIndent + baseIndent + "if self.__collectCov:\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "self.__cov.stop()\n")
+            genCode.append(baseIndent + baseIndent + baseIndent + "self.__updateCov()\n")
+        else:
+            genCode.append(baseIndent + newC + "\n")
+        if refC != newC:
+            genCode.append(baseIndent + refC + "\n")
+            if comparing:
+                genCode.append(baseIndent + "assert __result == __result_REF, \" (%s) == (%s) \" % (__result, __result_REF)\n")
+        for ch in changes:
+            genCode.append(baseIndent + ch + "\n")
+
+        for g in guardConds:
+            guardCode += " and (" + g + ")"
+
+        if newC.find("guarded") == 0:
+            guardCode += " and (" + newC.replace(")\n",",True))")
+
+        genCode.append("def " + guard + "(self):\n")
+        genCode.append(baseIndent + "return " + guardCode + "\n")
+
+        genCode.append("\n")
+
+        d = "self.__actions.append(("
+        d += "'''" + newC[:-1] +" ''',"
+        d += "self." + guard + ","
+        d += "self." + act + "))\n"
+        actDefs.append(d)
+        d = "self.__names[" + "'''" + newC[:-1] + " '''] = ("
+        d += "'''" + newC[:-1] + " ''',"
+        d += "self." + guard + ","
+        d += "self." + act + ")\n"
+        actDefs.append(d)
+
+
+    # ------------------------------------------ #
     genCode.append("def __init__(self):\n")
     genCode.append(baseIndent + "try:\n")
     genCode.append(baseIndent + baseIndent + "test_before_all()\n")
@@ -620,6 +669,7 @@ def main():
             outf.write(baseIndent + l)    
 
     outf.close()
+
 
 if __name__ == '__main__':
     main()
