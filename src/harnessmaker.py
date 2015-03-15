@@ -232,6 +232,7 @@ def main():
                 continue # COMMENT
 
             if re.match("<@", l):
+                #XXX: Any line with <@ will be ignored
                 inside_literal_block = True
                 continue
 
@@ -239,13 +240,14 @@ def main():
                 inside_literal_block = False
                 continue
 
-            if re.match("@import", l):
-                outf.write(l[1:])
-                # import, so set up reloading
-                module_names = parse_import_line(l)
-                import_modules += module_names
-
             if inside_literal_block:
+
+                if re.match("import ", l):
+                    outf.write(l[:])
+                    # import, so set up reloading
+                    module_names = parse_import_line(l)
+                    import_modules += module_names
+
                 if re.match("def guarded", l):
                     # guarded function, append the speculation argument and continue
                     outf.write(l.replace("):",", SPECULATIVE_CALL = False):"))
@@ -255,7 +257,7 @@ def main():
                 else:
                     outf.write(l)
 
-            elif l[0] == "*": # include action multiple times
+            elif l[0] == "*":       # include action multiple times
                 spos = l.find(" ")
                 times = int(l[1:spos])
                 for n in xrange(0,times):
@@ -396,7 +398,6 @@ def main():
     genCode = []
 
     baseIndent = "   "
-
 
     # ------------------------------------------ #
     actDefs = []
