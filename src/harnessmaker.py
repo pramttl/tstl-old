@@ -73,10 +73,11 @@ def parse_import_line(line):
     """
     raw = line.split('import ')
     assert len(raw) == 2, 'import statement error in line --> {}'.format(line)
+    # import X
     # from X import Y
+    # from X import Y,Z
     # from X import Y as Z
-    # import X.Y
-    # import X.Y as Z, A.B as C
+    # import X as Y, A as B
     raw = raw[1]
     # check for multiple imports
     subimports = [raw]
