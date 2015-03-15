@@ -35,6 +35,11 @@ def parse_args():
                         help='Generate coverage for module reload behavior.')
     parser.add_argument('-i', '--coverinit', action='store_true',
                         help='Generate coverage for SUT initialization behavior.')
+
+    # Useful to print internal variables iteratively
+    parser.add_argument('--debug', dest='debug', action='store_true', help='Toggle debug mode on')
+    parser.add_argument('--no-debug', dest='debug', action='store_false')
+    parser.set_defaults(debug=False)
     parsed_args = parser.parse_args(sys.argv[1:])
     return (parsed_args, parser)
 
@@ -43,6 +48,9 @@ def make_config(pargs, parser):
     """
     Process the raw arguments, returning a namedtuple object holding the
     entire configuration, if everything parses correctly.
+    Example:
+    Config(target='sut.py', classname='t', nocover=False, act='youractfile.act',
+           debug=False, coverreload=False, coverinit=False)
     """
     pdict = pargs.__dict__
     if pargs.act is None:
@@ -66,10 +74,11 @@ def make_config(pargs, parser):
 
 def parse_import_line(line):
     """
-    For PYTHON only
-    ---------------
     Parses an import line in the raw python code.
-    There are 4 possible kinds of import lines in python.
+    Input --> Output (Example)
+    :
+    :    "from math import sqrt" --> ['sqrt']
+    :
     """
     raw = line.split('import ')
     assert len(raw) == 2, 'import statement error in line --> {}'.format(line)
@@ -192,9 +201,13 @@ def main():
     global genCode;
 
     parsed_args, parser = parse_args()
-
     config = make_config(parsed_args, parser)
     print('Generating harness core using config={}'.format(config))
+
+    if config.debug:
+        from pprint import pprint
+
+    # sut.py (default)
     outf = open(config.target,'w')
 
     # Handle raw python, imports
@@ -202,12 +215,13 @@ def main():
     outf.write("import traceback\n")
     outf.write("import re\n")
     outf.write("import sys\n")
+
     if not config.nocover:
         outf.write("import coverage\n")
 
     code = []
-    import_modules = []  # we will call reload on these during restart
-    inside_literal_block = False
+    import_modules = []             # We will call reload on these during restart
+    inside_literal_block = False    # To check whether we are inside raw python code
 
     with open(config.act, 'r') as fp:
         for l in fp:
@@ -265,6 +279,7 @@ def main():
     logSet = []
     referenceMap = {}
 
+    # Parse the code to process the "tag lines"
     newCode = []
     for c in code:
         cs = c.split()
@@ -298,16 +313,31 @@ def main():
             newCode.append(c)
     code = newCode
 
+    if config.debug:
+        print("-------- :code: --------")
+        pprint(code)
+        print("------------------------")
+
     # ------------------------------------------ #
     code = expandPool(code)
     propSet = expandPool(propSet)
     initSet = expandPool(initSet)
     logSet = expandPool(logSet)
 
+    if config.debug:
+        print(":code: after expandPool(code)")
+        pprint(code)
+        print("------------------------")
+
     code = expandRange(code)
     propSet = expandRange(propSet)
     initSet = expandRange(initSet)
     logSet = expandRange(logSet)
+
+    if config.debug:
+        print(":code: after expandRange(code)")
+        pprint(code)
+        print("------------------------")
 
     # Finally go ahead and directly reference pools in preds and initalizers
     newProps = []
