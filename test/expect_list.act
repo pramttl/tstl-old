@@ -1,5 +1,5 @@
 pool: %INT% 1
-pool: %LIST% 1
+pool: %LIST% 2
 
 <@
 def change_len_before(list, amount):
@@ -16,6 +16,16 @@ def change_len_check(before, after, list, amount):
 %INT%:=%[1..4]%
 %LIST%:=[%INT%]
 
-expect: ~%LIST%.append(%INT%)               ==> change_len(~%LIST%, 1)
-expect: ~%LIST% = ~%LIST% + []              ==> change_len(~%LIST%, 0)
-expect: ~%LIST% = ~%LIST% + [%INT%, %INT%]  ==> change_len(~%LIST%, 2)
+%LIST% = %LIST% + %LIST%
+%LIST% = [%INT%]
+%LIST% = [%INT%, %INT%]
+
+
+expect: ~%LIST%.append(%INT%)                 ==> change_len(%LIST,1%, 1)
+
+expect: ~%LIST% = %LIST,1% + []               ==> change_len(%LIST,1%, 0)
+
+expect: ~%LIST% = %LIST,1% + [%INT%, %INT%]   ==> change_len(%LIST,1%, 2)
+
+# size of the list after in-place duplication has increased by half of its current size (i.e., it was 6 and now is 12, so it had increased by 12/2=6)
+expect: ~%LIST% = %LIST,1% + %LIST,1%         ==> change_len(%LIST,1%, len(%LIST,1%)/2) 

@@ -144,6 +144,27 @@ def expandRange(original):
             else:
                 newVersion.append(c)
         current = newVersion
+
+    for index, line in enumerate(newVersion):
+        for refPool in re.findall("%([^%,]*)\s*,\s*(\d+)%", line):
+            # it finds e.g., ('LIST', '2') if you have   ~%LIST,2%   in your .act file
+            poolName, refIndex = refPool
+            
+            # if you had 
+            # ~%LIST% = ~%LIST% + [%INT%, %INT%]
+            # in your .act file, and in this particular line they were expanded to e.g., 
+            # ~%LIST% [2] = ~%LIST% [3] + [%INT% [0], %INT% [0]]
+            # then poolOccurences will be ['2', '3']
+            poolOccurences = re.findall("%"+poolName+"%\s*\[(\d+)\]", line)
+
+            # refIndex is 2, so the actual pool used for the secons %LIST% is poolOccurences[1]
+            actualPoolUsed = poolOccurences[int(refIndex)-1]
+            
+            # replace   ~%LIST,2%    with    self.p_LIST[3]
+            line = re.sub(r"~?%([^%,]*)\s*,\s*(\d+)%", poolPrefix+"\\1["+actualPoolUsed+"]", line)
+            
+            newVersion[index] = line
+
     return newVersion
 
 
